@@ -1,0 +1,390 @@
+#+TITLE: Parsers (notes)
+
+* Prologue
+before we get started, if you have questions during the talk, please feel free
+to interrupt me or ask in #engineering-ttt and I'll look in that channel
+periodically -- or maybe someone else will be able to answer your question
+
+also -- I have a tendency to go too fast -- definitely ask me to slow down. it's
+about the journey, not the destination. and we don't have to finish everything.
+
+* Title
+Let's talk about parsers.
+* What is parsing?
+We constantly parse strings of text.
+* parseInt
+We parse strings into numbers with parseInt
+* fetch
+We parse API responses into JSON objects
+* gomod
+And we live in a hell world where buildtools define their own file formats -- despite reasonable formats already existing
+* Title (redux)
+So anyway, let's talk about writing parsers.
+* the typical approach: csv
+There's a typical approach we use when we parse a new format, like this CSV
+table -- which has a header line with the column names and some rows of data
+* the typical approach: csv 2
+We'll split this up on newlines, dropping the header line for simplicity
+* the typical approach: csv 3
+And then we'll just split each line on commas and wrap into our datatype
+
+And ignoring the obvious issues around malformed input or CSV intracacies, this
+is a totally valid way to parse the simple format into data.
+* ugh gomod
+The difficulty comes when we're presented with something like this
+
+Or, more specifically,
+* problem statement
+This. Because unfortunately, this is a valid gomod file
+
+It can have comments, or random indentation, or even be out of order -- the
+module doesn't need to be at the top; the go version doesn't need to be at the
+top.
+
+They have these require and replace blocks in parentheses, or you can
+have single standalone requires and replaces.
+
+And replace statements, for example, can vary in their shape -- one of them has
+a source version and the other one doesn't.
+
+---
+
+So we'll come back to the specifics of this format a little later -- but for
+now, thinking about how we'd normally approach this, with string splitting or
+regex, it's pretty clear that implementing a parser would be difficult. It's
+going to be difficult to get right, and it's going to be difficult to read and
+maintain when they add more features to this format.
+* a new hope
+So what I'd like to do instead is build a new toolkit that we can use to parse
+this format in a better way.
+
+And this technique is relatively-recent, only dating back to the year...
+* back to the future
+1985.
+
+And that is serious. I'm stealing this technique wholesale from a paper
+published in the year 1985.
+* functional style
+And it piggybacks on the functional style of defining a new datatype, with very
+few primitives, and gluing together -- or composing -- those primitives to build
+up more and more complex parsers.
+* a type of parser
+So let's think about what our parser type is going to look like.
+* parseInt
+I think a good starting point is to look at parseInt. It's a function that takes
+a string as input and returns a parsed number.
+* parseInt bad
+But because we want to build very small parsers and glue them together into
+bigger parsers, this type isn't very useful, because it must consume all of its
+input.
+* parseInt tuple
+Instead what I'd like to do is allow a parser to return some result and the
+remaining input.
+
+So here's some examples of what the return values might look like, if parseInt behaved this way
+
++ We can parse some int prefix, and the remainder is returned out
++ If the whole string is an int, the remaining input is just the empty string
++ and if the input doesn't start with an int, the parse fails with an error
+
+Do these examples make sense?
+<pause>
+
+Cool. This still has a couple of issues and the biggest one is that we throw runtime errors. And there are better ways to do what I'm about to propose, but...
+* parseInt nullable
+let's just use null to signal failure.
+
+So you'll notice that our failure case from before, instead of throwing an error, it just returns null
+* parseInt final
+So we have our final parser type.
+
+We're not always going to be parsing numbers, so..
+* parseInt factored
+Let's factor out the result type into a generic ~A~
+* parser alias
+And we'll give this thing a name.
+
+The way I read this is that a ~Parser~, with some result type ~A~ is a function
+that takes a string and returns either:
++ a pair of some result of type A and the
+remaining input
++ or it returns null.
+
+so here's the type of our improved parseInt from before
+
+Questions about this?
+
+This type is great and all, I guess, but as a user of this library, I'd prefer
+not to ever see this internal function type
+* parser class
+And to that end, let's actually wrap this function as a class. This is a class
+that has one field, and that field is the parser function
+
+It turns out that Promises do something really similar to this, actually.
+
+So at the bottom here we have an example where we have this parseSomething
+function that we wrap into a Parser -- and we invoke it by passing it an input
+string
+
+And doing this is the same thing as just calling that original parse function
+
+Again it's kind of a thin class wrapper
+
+I'd be shocked if there weren't questions, so I'll wait a second here just in
+case.
+
+** remember to live code
+let's take this definition as a starting point into a new typescript file
+* primitives intro
+Okay. On to primitives.
+
+And to be clear -- what I mean by primitives is that these three parsers are
+going to be the only foundation for every parser that I write. I will know
+nothing about that function type from before -- I will only know about these
+primitive parsers.
+* primitives: single
+Let's start with both the simplest parser we can think of -- and actually the
+most complex primitive of the three.
+
+it's just a parser that takes a single character from the input,
+unconditionally.
+
+So here are some examples of the behavior we want.
+
++ if we run it on the string "foo" we get the result value 'f' and the remaining input "oo"
++ if we run it on an empty string, the parse fails and we get null
++ if we run it the string "f" we get the result 'f' and empty string for the remaining input
+
+---
+
+Let's define it.
+
+So remember from before our parser function
+
++ takes a string as input
++ and returns either
+  + null, if the parse fails
+  + or a pair of our result type and the remaining input
+
+** ad-lib definition
+* primitives: fail
+The second primitive parser is one that always fails.
+
+As you can see, it always just returns null when we run it.
+
+** ad-lib definition
+We'll notice that this parser can be used at any result type. And that'll be useful
+later when we're gluing these things together.
+* primitives: resolve
+For reasons that'll be clear very soon I'm going to call the last primitive
+~resolve~. The way that resolve works is that you give it a value, and it
+returns a Parser that consumes no input and just returns that value.
+
+So in both of these examples, we provide some value -- whether it be 5 or NaN --
+and it gives us a parser that doesn't touch the input and just returns the value.
+
+** ad-lib definition
+* primitives: recap
+So to recap: these are our three primitive parsers
+
++ Again single gets a single character from the input stream, failing on empty input
++ Fail is a parser that always fails
++ And Parser.resolve creates parsers that always return some value without touching the input
+* combining them?
+so you may be wondering: how do we glue these things together?
+* combining them: promises
+I kind of hinted at it before with ~Parser.resolve~, but I really like how
+promises are glued together.
+
+We're able to take these results from promises and combine them -- and if any of
+these promises fail, it sort of short-circuits. So for example if ~resolve(5)~
+failed for some reason, it wouldn't get to ~this point~ =resolve(6)=
+
+So what I'm going to do is steal this idea of ~then~.
+
+** defining
+so if we think about what the type of ~then~ is on promises, it takes
++ a function from the result type A to a new promise with the result type of B, and it returns the new promise
++ doing a quick search and replace here =s/Promise/Parser/g=
++ this is the type of ~then~ that we want
+
+so we somehow need to get an ~A~ that we can pass to this ~next~ function. the problem is that we don't really have a value of type ~A~ to pass to the ~next~ function -- because parser is more of a recipe for how we will eventually /maybe/ get a result of type A -- assuming that this parser succeeds.
+
+does anyone have any ideas for how we might want to approach this?
+
+** answer
+so we're allowed to return /any/ Parser of B -- not necessarily the one that this ~next~ function gives us. so let's create a new Parser
+
+** examples
+use the example from the slide as a test case with =s/Promise/Parser/g=
+single + single
+fail + single
+* one more thing: oneOf
+There's one more thing we need before we can forget about the Parser internals
+-- and that is this oneOf function.
+
+Given a list of parsers, it'll return the result of the first parser to succeed.
+
+So here's some examples
+
+** ad-lib definition
+similarly to ~then~ we're going to return a new ~Parser~, because we don't have
+any input to feed to the parsers in this array
+* the hard part is over
+So the hard part of the library is over.
+
+We can forget entirely about the parser internals
+
+We only care about these five things
+
+... and now, we cook with gas.
+
+Any questions before we switch over to the code editor?
+
+** switch to editor, forever
+* combinators: char
+So we know how to parse /any/ character -- how do we parse a specific character?
+
+** start typing out char, without body -- include =type char = string= for sanity
+any guesses?
+** ad-lib definition
+* combinators: satisfy (digit, alpha, alphanum)
+Next up, I'd like a parser that only parses digit characters
+
+** copy definition of char and modify it slightly 
+I suspect it's going to look pretty similar to char, so I'm just going to copy
+that definition
+
+...
+
+I'm already noticing some duplication. I think there's a useful thing I can pull out -- I'll call it satisfy
+** define satisfy
+** redefine char and digit in terms of satisfy
+** define letter
+** define space
+includes not just normal spaces, but also newlines
+* combinators: chunk
+Let's add a parser that parses a whole string, like foo
+
+I'll call it chunk: =chunk("foo").run("foobar") => ["foo","bar"]=
+
+Any guesses as to how this will be done?
+
+I /could/ chain together parsers for each letter in the string. For my own sanity I'm just going to define this as a primitive parser, kind of like ~single~
+* combinators: int/repetition
+Remember our our parseInt example from before? Let's actually define an int parser
+
+=const int: Parser<number> = zero=
+
+And so it's pretty clear that we're going to need a way to repeat parsers,
+right? because we know how to parse one digit, with ~digit~ -- but we need a way to parse one or more digits in a row
+
+So let's define a parser ~oneOrMore~
+
+** ad-lib oneOrMore, zeroOrMore, int
+make sure to use examples for oneOrMore, zeroOrMore
+* combinators: between
+So something that's noticeably hurting readability -- or I suspect will hurt
+readability soon is this nested ~thens~ thing. And I think it's only going to
+get worse.
+
+As an example, let's write a parser that parses a string of letters between
+double quotes
+
+** wordString example
+** defining between: ad-lib
+** oh no
+so this already gets pretty nested -- and the parsers we're going to write soon
+are even worse
+
+and this isn't a new problem. we've *seen* this before, with promises, right?
+how do promises resolve this?
+* async/await -- back to the slides
+so promises resolve this with some special syntax -- async/await.
+
+and so this syntax gets roughly desugared down to =three slides earlier= this
+example from before, right?
+
+well, not quite.
+* async/await: babel?
+for how they're actually desugared, we can look to babel, which turns our fancy
+new javascript features into older javascript for compatibility.
+
+So how does babel desugar async/await?
+* async/await: desugared
+it uses a bluebird helper called ~coroutine~ and a javascript feature called
+generators. that's the asterisk after the ~function~ here.
+
+you can think of generators as resumable functions. so the way this works is
+that
+
+Bluebird.coroutine is going to:
++ start running our generator function
++ and when we come across a ~yield~, our function is going to pause and wait for input
++ what is the input we're waiting for? it's waiting for the result of this
+  promise that we yielded
+
+so Bluebird.coroutine is going to take this promise that we yielded
+* async/await: desugared, explained
+and call ~then~ on it. and resume our function with the result
+
+So, in short, ~Bluebird.coroutine~ is just a loop that keeps resuming our
+function with calls to ~promise.then~
+
+And *this is the key insight here*: if ~Bluebird.coroutine~ is just a loop that
+calls ~promise.then~.. what's stopping us from doing the same thing with
+~parser.then~?
+* well
+well..
+* makeParser: between
+no, I'm just kidding. there's *nothing* stopping us.
+
+so here's our new definition of between, using our newly-minted ~makeParser~. it
+flattens out our parsers into something that's much easier read and much easier
+to write
+
+questions before we go knock out this gomod parser?
+
+** back to the editor
+I'm not going to rewrite these older parsers, but I am going to use ~makeParser~
+a lot in newer parsers
+* gomod reference
+okay so let's get started with gomod.
+
++ I want to parse this into a list of statements
++ let's write out our statement type
++ let's start bottom-up and write parsers for each individual statement type,
+  and then combine those parsers
++ a really common pattern when writing these things is we don't want to have to
+  worry about whitespace, so what we're going to do after parsing something is
+  to immediately consume all trailing whitespace
+  - so for example, we'll have a parser that looks for this string ~"require"~
+    and then it'll consume all of the whitespace until ~"foo"~, so the package
+    parser doesn't need to worry about whitespace
+** define token, without comments
+normally here in this whitespace consumer we'd also consume things like comments, so let's do that
+** add comments support to token
+* write gomod stuff!
+** notably missing so far: ~token~ and ~optional~
+* closing thoughts
+so I have a few closing thoughts
+* closing thoughts: errors
+one of the cool things about writing parsers this way is that we can change the
+internal parser type and fix up the five primitives, and get things like really
+good error messages for free, while still writing our parsers in this really
+concise manner
+
+and this is because when we're writing parsers, we're actually building up a
+recipe for how we /will/ parse something when we get some input
+
+and so the library can inspect our recipe and give us things like this
+* closing thoughts: backtracking
+the second piece is that this parser actually fails on these three inputs --
+even though it probably shouldn't. but again, because we can just modify the
+internal parser type, and our primitives, we can support things like the
+backtracking this needs. and it turns out to be a really simple change.
+
+* closing thoughts: parsers as recipes
+lastly, this concept of building a recipe for how you're going to do something,
+rather than immediately doing it, is incredibly powerful, and lends itself
+really well to composable, maintainable abstractions
