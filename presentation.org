@@ -1,0 +1,591 @@
+#+TITLE: Parsers
+
+* prologue
+
+
+
+Questions during the talk?
+
+
++ =Interrupt me!=
+
+ 
++ Ask in =#engineering-ttt=
+
+
++ Ask me to slow down
+* Title
+
+
+
+
+Let's talk about ~parsers~.
+* What is parsing?
+
+
+
+
+We parse things /all the time/
+* parseInt
+
+
+
+
+#+BEGIN_SRC typescript
+const text: string = "5"
+const someNumber: number = parseInt(text)
+#+END_SRC
+
+* fetch
+
+
+
+
+#+BEGIN_SRC typescript
+const data = fetch("https://example.com/")
+  .then(response => response.json())
+#+END_SRC
+
+* gomod
+
+
+
+
+#+BEGIN_SRC go
+module example.com/hello
+
+go 1.12
+
+require (
+	golang.org/x/text v0.3.0 // indirect
+	rsc.io/quote v1.5.2
+)
+#+END_SRC
+
+* Title (redux)
+
+
+
+
+Let's talk about ~writing parsers~.
+
+* the typical approach: csv
+
+
+
+
+#+BEGIN_SRC csv
+id,first_name,age
+1,Alice,30
+2,Bob,25
+3,Eve,40
+4,Mallory,35
+5,Trent,50
+#+END_SRC
+
+* the typical approach: csv 2
+
+#+BEGIN_SRC typescript
+const lines: string[] =
+    input.split("\n").slice(1);
+#+END_SRC
+
+#+BEGIN_SRC typescript
+[ '1,Alice,30'
+, '2,Bob,25'
+, '3,Eve,40'
+, '4,Mallory,35'
+, '5,Trent,50'
+]
+#+END_SRC
+
+* the typical approach: csv 3
+
+#+BEGIN_SRC typescript
+const result: Person[] =
+    lines.map(line => {
+        const sections = line.split(",");
+        return new Person(...)
+    })
+#+END_SRC
+
+#+BEGIN_SRC typescript
+[ Person(1, 'Alice', 30)
+, Person(2, 'Bob', 25)
+, Person(3, 'Eve', 40)
+, Person(4, 'Mallory', 35)
+, Person(5, 'Trent', 50)
+]
+#+END_SRC
+
+* ugh gomod
+
+
+
+
+#+BEGIN_SRC go
+module example.com/hello
+
+go 1.12
+
+require (
+	golang.org/x/text v0.3.0 // indirect
+	rsc.io/quote v1.5.2
+)
+#+END_SRC
+
+* problem statement
+#+BEGIN_SRC go
+    /* multi-line comments!
+             ,*/ 
+
+require (
+	golang.org/x/text v0.3.0 // indirect
+		rsc.io/quote v1.5.2
+)
+
+module example.com/hello
+
+require foo.bar/baz v1.0.0 /* comments can
+appear /* anywhere */ require ugh.com/why v2.0.0
+
+replace "IDontHaveA.com/SourceVersion" => example.com/otherpackage v2.0.0
+replace "ButIHaveA.com/SourceVersion" v1.0.0-lol => example.com/otherpackage v2.0.0
+
+		go 1.12
+
+#+END_SRC
+
+* a new hope
+
+
+
+
+A New Hope
+
+* back to the future
+
+
+
+
++A New Hope+
+~Back to the Future~
+
+* functional technique
+
+
+
+
+1. Define Parser as a ~data type~
+
+2. Define a few ~primitive~ parsers
+  
+3. ~Composition~
+
+* a type of parser
+
+A ~Type~ of Parser
+
+* parseInt
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parseInt(str: string): number
+#+END_SRC
+
+* parseInt bad
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parseInt(str: string): number
+#+END_SRC
+
+
+Must consume all of the input :(
+
+* parseInt tuple
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parseInt(str: string): [number, string]
+
+
+>>> parseInt("34foo")
+[34,"foo"]
+
+>>> parseInt("1234")
+[1234,""]
+
+>>> parseInt("bar5")
+error!
+#+END_SRC
+
+* parseInt tuple list
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parseInt(str: string): [number, string] | null
+
+
+>>> parseInt("34foo")
+[34,"foo"]
+
+>>> parseInt("1234")
+[1234,""]
+
+>>> parseInt("bar5")
+null
+#+END_SRC
+
+* parseInt final
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parseInt(str: string): [number, string] | null
+#+END_SRC
+
+* parseInt factored
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+parse<A>(str: string): [A, string] | null
+#+END_SRC
+
+* parser alias
+
+A ~Type~ of Parser
+
+
+#+BEGIN_SRC typescript
+type Parser<A> =
+    (_: string) => [A, string] | null
+
+// for example:
+parseInt: Parser<number>
+#+END_SRC
+
+* parser class
+
+A =Class= of Parser
+
+
+#+BEGIN_SRC typescript
+type ParseFn<A> =
+    (_: string) => [A, string] | null
+
+class Parser<A> {
+    run: ParseFn<A>
+
+    constructor(run: ParseFn<A>) {
+        this.run = run
+    }
+}
+
+// invoking
+const someParser = new Parser(parseSomething)
+someParser.run("input string")
+
+// is the same as
+parseSomething("input string")
+#+END_SRC
+
+* primitives intro
+
+
+
+
+Primitives: ~3~ of them
+
+The _only_ foundation for every parser we write
+
+* primitives: single
+
+Primitive 1 of 3: ~single~
+
+Consumes a single character from the input
+
+#+BEGIN_SRC typescript
+// ugh js doesn't have a char type
+const single: Parser<string>
+
+>>> single.run("foo")
+['f',"oo"]
+
+>>> single.run("")
+null
+
+>>> single.run("f")
+['f',""]
+#+END_SRC
+
+* primitives: zero
+
+Primitive 2 of 3: ~fail~
+
+Always fails
+
+#+BEGIN_SRC typescript
+const fail: Parser<any>
+
+>>> fail.run("foo")
+null
+
+>>> fail.run("")
+null
+#+END_SRC
+
+* primitives: resolve
+
+Primitive 3 of 3: ~Parser.resolve~
+
+Returns a value without consuming input
+
+#+BEGIN_SRC typescript
+>>> Parser.resolve(5).run("foo")
+[5,"foo"]
+
+>>> Parser.resolve(NaN).run("bar")
+[NaN,"bar"]
+#+END_SRC
+
+* primitives: recap
+
+Primitives
+
+#+BEGIN_SRC typescript
+// get a single character from the input stream
+// fails on empty input
+single: Parser<string>
+
+// always fails
+fail: Parser<any>
+
+// returns a value without touching input
+Parser.resolve<T>(val: T): Parser<T>
+#+END_SRC
+
+* combining them?
+
+
+
+How do we combine parsers????
+* combining them: promises
+
+
+
+
+Promises 👀
+
+#+BEGIN_SRC typescript
+const somePromise: Promise<number> =
+    Promise.resolve(5).then(a =>
+        Promise.resolve(6).then(b =>
+            Promise.resolve(a + b)))
+#+END_SRC
+
+* one more thing: oneOf
+
+One more thing
+
+#+BEGIN_SRC typescript
+// returns the result of the first parser to succeed
+oneOf<A>(parsers: Array<Parser<A>>): Parser<A>
+
+>>> oneOf([single,fail]).run("ok")
+['o',"k"]
+
+>>> oneOf([fail,fail]).run("ok")
+null
+
+>>> oneOf([fail,single,fail,single]).run("ok")
+['o',"k"]
+#+END_SRC
+
+* the hard part is over
+
+
+
+The hard part is over!
+
+We can forget about the Parser internals.
+
+We only care about:
++ ~single~
++ ~fail~
++ ~Parser.resolve~
++ ~Parser.then~
++ ~oneOf~
+ 
+* async/await
+
+
+
+
+Promises 👀
+
+#+BEGIN_SRC typescript
+const somePromise = async (): Promise<number> => {
+    const a = await Promise.resolve(5)
+    const b = await Promise.resolve(6)
+    return Promise.resolve(a + b)
+}
+#+END_SRC
+
+* async/await: babel?
+
+
+
+
+Promises 👀
+
+#+BEGIN_SRC typescript
+const somePromise = async (): Promise<number> => {
+    const a = await Promise.resolve(5)
+    const b = await Promise.resolve(6)
+    return Promise.resolve(a + b)
+}
+#+END_SRC
+
+Babel: turns =new javascript= features
+       into =old javascript=
+
+* async/await: desugared
+
+
+
+
+Promises 👀
+
+#+BEGIN_SRC typescript
+const somePromise: Promise<number> =
+    Bluebird.coroutine(function*() {
+        const a = yield Promise.resolve(5)
+        const b = yield Promise.resolve(6)
+        return Promise.resolve(a + b)
+    })()
+#+END_SRC
+
+Generators: resumable functions
+
+* async/await: desugared, explained
+
+
+
+
+Promises 👀
+
+#+BEGIN_SRC typescript
+const somePromise: Promise<number> =
+    Bluebird.coroutine(function*() {
+        const a = yield Promise.resolve(5)
+        const b = yield Promise.resolve(6)
+        return Promise.resolve(a + b)
+    })()
+#+END_SRC
+
+~then~ is used to chain yielded Promises
+
+* well
+
+
+
+
+    Well..
+
+* makeParser: between
+
+
+
+#+BEGIN_SRC typescript
+const between = (
+  before: Parser<any>,
+  after: Parser<any>,
+  middle: Parser<A>
+): Parser<A> =>
+    makeParser(function*() {
+        yield before
+        const result = yield middle
+        yield after
+
+        return Parser.resolve(result)
+    })()
+#+END_SRC
+
+* gomod reference
+
+#+BEGIN_SRC go
+module github.com/foo/bar
+go 1.14
+
+require foo v1
+require (
+	bar v2
+	baz v3
+)
+
+replace foo v1 => foo v2
+replace bar => baz v3
+#+END_SRC
+
+* closing thoughts
+
+
+
+
+Closing thoughts
+
++ Errors?
+
++ Backtracking?
+
++ Parsers as recipes
+ 
+* closing thoughts: errors
+
+Error messages ~for free~
+
+#+BEGIN_SRC bash
+3:1:
+  |
+3 | foobar (
+  | ^
+unexpected 'f'
+expecting "exclude", "go", "replace", "require", or end of input
+#+END_SRC
+
+* closing thoughts: backtracking
+
+Backtracking
+
+This parser:
+#+BEGIN_SRC typescript
+yield oneOrMore(letter)
+yield chunk("n't")
+#+END_SRC
+
+Fails on "can't", "don't", "parsen't"
+
+* closing thoughts: parsers as recipes
+
+
+
+
+Building a =recipe= for how you're
+going to do something is incredibly
+powerful.
+
+Think about:
+- what are your ~primitive operations~?
+- how do they ~compose~?
